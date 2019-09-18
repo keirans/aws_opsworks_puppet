@@ -1,0 +1,338 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: All in one Opsworks Puppet Instance deployed in a VPC with no IGW
+
+Parameters: 
+  KeyName: 
+    Type: String
+    Default: 'Keiran-OSX'
+    Description: The SSH Key Name that is already present in the target account for access to the Puppet Instance
+
+  InstanceType:
+    Type: String
+    Default: 'm5.xlarge'
+    Description: The instance type to be used for the Opsworks Puppet instance
+
+  AvailabilityZoneA:
+    Type: String
+    Default: 'a'
+    Description: The AZ Identifier to be used for AZ A in your region
+
+  AvailabilityZoneB:
+    Type: String
+    Default: 'b'
+    Description: The AZ Identifier to be used for AZ B in your region
+
+  PreferredBackupWindow:
+    Type: String
+    Default: Tue:08:00
+    Description: The backup window for your Opsworks Instance
+
+  PreferredMaintenanceWindow:
+    Type: String
+    Default: Mon:08:00
+    Description: The maintainence window for your Opsworks Instance
+
+  BackupRetentionCount:
+    Type: Number
+    Default: 7
+    Description: The number of backups to retain for your Opsworks instance
+
+  AdminPassword:
+    Type: String
+    Default: Th1s1z@n3xampl!0nly
+    NoEcho: true
+    Description: The Opsworks Instance Puppet admin password - You should change this
+
+  R10KRemote:
+    Type: String
+    Default: ssh://git@bitbucket.example.com/project/control-repo.git
+    Description: The Opsworks Instance remote git server for code manager integration - You should change this to something within your VPC
+
+  # Paste your key into a SSM Param store value at the path /Opsworks/R10KKey and the stack will fetch it for you.
+  R10KKey:
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: '/Opsworks/R10KKey'
+    NoEcho: true
+
+Resources:
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      InstanceTenancy: default
+      Tags:
+        - Key: "Name"
+          Value: "Opsworks Demo VPC"
+
+  PrivateSubnetA:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: myVPC
+        CidrBlock: 10.0.1.0/24
+        AvailabilityZone: !Join
+          - ''
+          - - !Ref AWS::Region
+            - !Ref AvailabilityZoneA
+        Tags:
+          - Key: "Name"
+            Value: "Opsworks Demo PublicSubnetA"
+
+  PrivateSubnetB:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: myVPC
+        CidrBlock: 10.0.2.0/24
+        AvailabilityZone: !Join
+          - ''
+          - - !Ref AWS::Region
+            - !Ref AvailabilityZoneB
+        Tags:
+          - Key: "Name"
+            Value: "Opsworks Demo PublicSubnetA"
+
+  PrivateARouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: myVPC
+        Tags:
+          - Key: Name
+            Value: "Opsworks Demo PublicSubnetA Route Table"
+
+  PrivateBRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: myVPC
+        Tags:
+          - Key: Name
+            Value: "Opsworks Demo PublicSubnetB Route Table"
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnetA
+      RouteTableId:
+        Ref: PrivateARouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnetB
+      RouteTableId:
+        Ref: PrivateBRouteTable
+
+  VPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref myVPC
+      GroupName: VPCEndpointSecurityGroup
+      GroupDescription: VPC Endpoint Security Group
+      SecurityGroupIngress:
+        - CidrIp: 10.0.0.0/16
+          Description: VPC Endpoint Ingress range
+          FromPort: 443
+          ToPort: 443
+          IpProtocol: "tcp"
+
+  CloudformationEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref myVPC
+      ServiceName: com.amazonaws.ap-southeast-2.cloudformation
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
+  EC2Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref myVPC
+      ServiceName: com.amazonaws.ap-southeast-2.ec2
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
+  EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref myVPC
+      ServiceName: com.amazonaws.ap-southeast-2.ec2messages
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref myVPC
+      ServiceName: com.amazonaws.ap-southeast-2.ssm
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument: 
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: "*"
+          Action: '*'
+          Resource: '*'
+      RouteTableIds:
+        - !Ref PrivateARouteTable
+        - !Ref PrivateBRouteTable
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcId: !Ref myVPC
+
+  # 
+  # Opsworks Components
+  # https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-opsworkscm-server.html
+  #
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      - arn:aws:iam::aws:policy/AWSOpsWorksCMInstanceProfileRole
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+        Version: '2012-10-17'
+      Path: /
+      RoleName: !Join [ "", [ "aws-opsworks-cm-", !Ref "AWS::StackName" ] ]
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - Ref: InstanceRole
+      InstanceProfileName: !Join [ "", [ "aws-opsworks-cm-instance-profile-", !Ref "AWS::StackName" ] ]
+
+  ServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSOpsWorksCMServiceRole
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - opsworks-cm.amazonaws.com
+        Version: '2012-10-17'
+      Path: /
+
+  PuppetMasterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref myVPC
+      GroupName: StagingPuppetMasterSecurityGroup
+      GroupDescription: Staging Puppet Master Security Group
+      SecurityGroupIngress:
+        - CidrIp: 10.0.0.0/16
+          Description: PE Orchestrator
+          FromPort: 8142
+          ToPort: 8143
+          IpProtocol: "tcp"
+        - CidrIp: 10.0.0.0/16
+          Description: PE Console API endpoint
+          FromPort: 4433
+          ToPort: 4433
+          IpProtocol: "tcp"
+        - CidrIp: 10.0.0.0/16
+          Description: PE Master API
+          FromPort: 8140
+          ToPort: 8140
+          IpProtocol: "tcp"
+        - CidrIp: 10.0.0.0/16
+          Description: PE Console HTTPS
+          FromPort: 443
+          ToPort: 443
+          IpProtocol: "tcp"
+        - CidrIp: 10.0.0.0/16
+          Description: PE Instance SSH access
+          FromPort: 22
+          ToPort: 22
+          IpProtocol: "tcp"
+        - CidrIp: 10.0.0.0/16
+          Description: PE Code Manager Port
+          FromPort: 8170
+          ToPort: 8170
+          IpProtocol: "tcp"
+
+  PuppetMaster:
+   Type: AWS::OpsWorksCM::Server
+   Properties:
+    AssociatePublicIpAddress: false
+    BackupRetentionCount: 10
+    DisableAutomatedBackup: false
+    Engine: Puppet
+    EngineAttributes:
+    - Name: PUPPET_ADMIN_PASSWORD
+      Value: !Ref AdminPassword
+    - Name: PUPPET_R10K_REMOTE
+      Value: !Ref R10KRemote
+    - Name: PUPPET_R10K_PRIVATE_KEY
+      Value: !Ref R10KKey
+    EngineModel: Monolithic
+    EngineVersion: '2017'
+    InstanceProfileArn: !GetAtt [InstanceProfile, Arn]
+    InstanceType: !Ref InstanceType
+    KeyPair: !Ref KeyName
+    PreferredBackupWindow: !Ref PreferredBackupWindow
+    PreferredMaintenanceWindow: !Ref PreferredMaintenanceWindow
+    SecurityGroupIds:
+      - !Ref PuppetMasterSecurityGroup
+    ServerName: PuppetMaster
+    ServiceRoleArn: !GetAtt [ServiceRole, Arn]
+    SubnetIds:
+      - !Ref PrivateSubnetA
+
+Outputs:
+    PuppetEndpoint:
+      Description: OpsWorks Puppet Server Endpoint
+      Value: !GetAtt [PuppetMaster, Endpoint]
+
+    PuppetMasterSecurityGroup:
+      Description: LRI Staging Puppet Master Security Group
+      Value: !Ref PuppetMasterSecurityGroup
+
+
+
+
+
